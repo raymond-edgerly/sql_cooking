@@ -1,4 +1,6 @@
+/* Temporary table to store data.*/
 DROP TABLE IF EXISTS results_table CASCADE;
+/* Four CTEs for different days of the week: M -> W, Th., Fr., Weekend */
 CREATE TABLE results_table AS 
 WITH initial_random AS (
     SELECT * FROM meals
@@ -83,11 +85,9 @@ WITH initial_random AS (
            ROW_NUMBER() OVER (ORDER BY ( SELECT NULL::text)) AS rn
       FROM combined
 )
+/* Output the day of the week in specific format + relevant columns from our table */
 SELECT TO_CHAR((date_trunc('week'::text, (CURRENT_DATE)::timestamp with time zone) + (((numbered.rn - 1))::double precision * '1 day'::interval) + interval '7 days'), 'Dy FMMM/DD'::text) AS day_of_week,
      numbered.meal_id,
      numbered.meal_name,
-     -- numbered.solo,
      numbered.season
-     -- numbered.weekend
-     -- numbered.rn
 FROM numbered;
