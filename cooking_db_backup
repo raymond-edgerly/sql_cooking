@@ -1,0 +1,599 @@
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 14.11 (Ubuntu 14.11-0ubuntu0.22.04.1)
+-- Dumped by pg_dump version 14.11 (Ubuntu 14.11-0ubuntu0.22.04.1)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: meals_sides; Type: TABLE; Schema: public; Owner: rj
+--
+
+CREATE TABLE public.meals_sides (
+    meal_id integer NOT NULL,
+    side_id integer NOT NULL
+);
+
+
+ALTER TABLE public.meals_sides OWNER TO rj;
+
+--
+-- Name: results_table; Type: TABLE; Schema: public; Owner: rj
+--
+
+CREATE TABLE public.results_table (
+    day_of_week text,
+    meal_id integer,
+    meal_name character varying(50),
+    season integer[]
+);
+
+
+ALTER TABLE public.results_table OWNER TO rj;
+
+--
+-- Name: sides; Type: TABLE; Schema: public; Owner: rj
+--
+
+CREATE TABLE public.sides (
+    sides_id integer NOT NULL,
+    side_name character varying(30)
+);
+
+
+ALTER TABLE public.sides OWNER TO rj;
+
+--
+-- Name: g_list; Type: VIEW; Schema: public; Owner: rj
+--
+
+CREATE VIEW public.g_list AS
+ SELECT s.side_name AS g_list
+   FROM ((public.meals_sides ms
+     RIGHT JOIN public.sides s ON ((ms.side_id = s.sides_id)))
+     JOIN public.results_table r ON ((ms.meal_id = r.meal_id)));
+
+
+ALTER TABLE public.g_list OWNER TO rj;
+
+--
+-- Name: g_list2; Type: VIEW; Schema: public; Owner: rj
+--
+
+CREATE VIEW public.g_list2 AS
+ SELECT s.side_name AS g_list
+   FROM ((public.meals_sides ms
+     RIGHT JOIN public.sides s ON ((ms.side_id = s.sides_id)))
+     JOIN public.results_table r ON ((ms.meal_id = r.meal_id)))
+UNION
+ SELECT results_table.meal_name AS g_list
+   FROM public.results_table;
+
+
+ALTER TABLE public.g_list2 OWNER TO rj;
+
+--
+-- Name: meals; Type: TABLE; Schema: public; Owner: rj
+--
+
+CREATE TABLE public.meals (
+    meal_id integer NOT NULL,
+    meal_name character varying(50),
+    solo integer,
+    season integer[],
+    weekend integer,
+    difficulty integer
+);
+
+
+ALTER TABLE public.meals OWNER TO rj;
+
+--
+-- Name: meals_meal_id_seq; Type: SEQUENCE; Schema: public; Owner: rj
+--
+
+CREATE SEQUENCE public.meals_meal_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.meals_meal_id_seq OWNER TO rj;
+
+--
+-- Name: meals_meal_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: rj
+--
+
+ALTER SEQUENCE public.meals_meal_id_seq OWNED BY public.meals.meal_id;
+
+
+--
+-- Name: random_items_from_days2; Type: VIEW; Schema: public; Owner: rj
+--
+
+CREATE VIEW public.random_items_from_days2 AS
+ WITH initial_random AS (
+         SELECT meals.meal_id,
+            meals.meal_name,
+            meals.solo,
+            meals.season,
+            meals.weekend
+           FROM public.meals
+          ORDER BY (random())
+         LIMIT 3
+        ), additional_solo AS (
+         SELECT meals.meal_id,
+            meals.meal_name,
+            meals.solo,
+            meals.season,
+            meals.weekend
+           FROM public.meals
+          WHERE ((meals.solo = 1) AND (NOT ((meals.meal_name)::text IN ( SELECT initial_random.meal_name
+                   FROM initial_random))))
+         LIMIT 1
+        ), additional_random AS (
+         SELECT meals.meal_id,
+            meals.meal_name,
+            meals.solo,
+            meals.season,
+            meals.weekend
+           FROM public.meals
+          WHERE (NOT ((meals.meal_name)::text IN ( SELECT initial_random.meal_name
+                   FROM initial_random
+                UNION
+                 SELECT additional_solo.meal_name
+                   FROM additional_solo)))
+          ORDER BY (random())
+         LIMIT 1
+        ), additional_weekend AS (
+         SELECT meals.meal_id,
+            meals.meal_name,
+            meals.solo,
+            meals.season,
+            meals.weekend
+           FROM public.meals
+          WHERE ((meals.weekend = 1) AND (NOT ((meals.meal_name)::text IN ( SELECT initial_random.meal_name
+                   FROM initial_random
+                UNION
+                 SELECT additional_solo.meal_name
+                   FROM additional_solo
+                UNION
+                 SELECT additional_random.meal_name
+                   FROM additional_random))))
+         LIMIT 2
+        ), combined AS (
+         SELECT initial_random.meal_id,
+            initial_random.meal_name,
+            initial_random.solo,
+            initial_random.season,
+            initial_random.weekend
+           FROM initial_random
+        UNION ALL
+         SELECT additional_solo.meal_id,
+            additional_solo.meal_name,
+            additional_solo.solo,
+            additional_solo.season,
+            additional_solo.weekend
+           FROM additional_solo
+        UNION ALL
+         SELECT additional_random.meal_id,
+            additional_random.meal_name,
+            additional_random.solo,
+            additional_random.season,
+            additional_random.weekend
+           FROM additional_random
+        UNION ALL
+         SELECT additional_weekend.meal_id,
+            additional_weekend.meal_name,
+            additional_weekend.solo,
+            additional_weekend.season,
+            additional_weekend.weekend
+           FROM additional_weekend
+        ), numbered AS (
+         SELECT combined.meal_id,
+            combined.meal_name,
+            combined.solo,
+            combined.season,
+            combined.weekend,
+            row_number() OVER (ORDER BY ( SELECT NULL::text)) AS rn
+           FROM combined
+        )
+ SELECT numbered.meal_id,
+    numbered.meal_name,
+    numbered.solo,
+    numbered.season,
+    numbered.weekend,
+    numbered.rn,
+    to_char((date_trunc('week'::text, (CURRENT_DATE)::timestamp with time zone) + (((numbered.rn - 1))::double precision * '1 day'::interval)), 'Dy'::text) AS day_of_week
+   FROM numbered;
+
+
+ALTER TABLE public.random_items_from_days2 OWNER TO rj;
+
+--
+-- Name: random_items_with_days; Type: VIEW; Schema: public; Owner: rj
+--
+
+CREATE VIEW public.random_items_with_days AS
+ WITH initial_random AS (
+         SELECT meals.meal_id,
+            meals.meal_name,
+            meals.solo,
+            meals.season,
+            meals.weekend
+           FROM public.meals
+          WHERE (meals.solo <> 1)
+          ORDER BY (random())
+         LIMIT 3
+        ), additional_solo AS (
+         SELECT meals.meal_id,
+            meals.meal_name,
+            meals.solo,
+            meals.season,
+            meals.weekend
+           FROM public.meals
+          WHERE ((meals.solo = 1) AND (NOT ((meals.meal_name)::text IN ( SELECT initial_random.meal_name
+                   FROM initial_random))))
+         LIMIT 1
+        ), additional_random AS (
+         SELECT meals.meal_id,
+            meals.meal_name,
+            meals.solo,
+            meals.season,
+            meals.weekend
+           FROM public.meals
+          WHERE (NOT ((meals.meal_name)::text IN ( SELECT initial_random.meal_name
+                   FROM initial_random
+                UNION
+                 SELECT additional_solo.meal_name
+                   FROM additional_solo)))
+          ORDER BY (random())
+         LIMIT 1
+        ), additional_weekend AS (
+         SELECT meals.meal_id,
+            meals.meal_name,
+            meals.solo,
+            meals.season,
+            meals.weekend
+           FROM public.meals
+          WHERE ((meals.weekend = 1) AND (NOT ((meals.meal_name)::text IN ( SELECT initial_random.meal_name
+                   FROM initial_random
+                UNION
+                 SELECT additional_solo.meal_name
+                   FROM additional_solo
+                UNION
+                 SELECT additional_random.meal_name
+                   FROM additional_random))))
+         LIMIT 2
+        ), combined AS (
+         SELECT initial_random.meal_id,
+            initial_random.meal_name,
+            initial_random.solo,
+            initial_random.season,
+            initial_random.weekend
+           FROM initial_random
+        UNION ALL
+         SELECT additional_solo.meal_id,
+            additional_solo.meal_name,
+            additional_solo.solo,
+            additional_solo.season,
+            additional_solo.weekend
+           FROM additional_solo
+        UNION ALL
+         SELECT additional_random.meal_id,
+            additional_random.meal_name,
+            additional_random.solo,
+            additional_random.season,
+            additional_random.weekend
+           FROM additional_random
+        UNION ALL
+         SELECT additional_weekend.meal_id,
+            additional_weekend.meal_name,
+            additional_weekend.solo,
+            additional_weekend.season,
+            additional_weekend.weekend
+           FROM additional_weekend
+        ), numbered AS (
+         SELECT combined.meal_id,
+            combined.meal_name,
+            combined.solo,
+            combined.season,
+            combined.weekend,
+            row_number() OVER (ORDER BY ( SELECT NULL::text)) AS rn
+           FROM combined
+        )
+ SELECT numbered.meal_id,
+    numbered.meal_name,
+    numbered.solo,
+    numbered.season,
+    numbered.weekend,
+    numbered.rn,
+    to_char((date_trunc('week'::text, (CURRENT_DATE)::timestamp with time zone) + (((numbered.rn - 1))::double precision * '1 day'::interval)), 'Dy'::text) AS day_of_week
+   FROM numbered;
+
+
+ALTER TABLE public.random_items_with_days OWNER TO rj;
+
+--
+-- Name: random_meals; Type: VIEW; Schema: public; Owner: rj
+--
+
+CREATE VIEW public.random_meals AS
+ SELECT meals.meal_id,
+    meals.meal_name,
+    meals.solo,
+    meals.season,
+    meals.weekend
+   FROM public.meals
+  WHERE (2 = ANY (meals.season))
+  ORDER BY (random())
+ LIMIT 7;
+
+
+ALTER TABLE public.random_meals OWNER TO rj;
+
+--
+-- Name: season; Type: TABLE; Schema: public; Owner: rj
+--
+
+CREATE TABLE public.season (
+    season_id integer NOT NULL,
+    season_name character varying(10)
+);
+
+
+ALTER TABLE public.season OWNER TO rj;
+
+--
+-- Name: season_season_id_seq; Type: SEQUENCE; Schema: public; Owner: rj
+--
+
+CREATE SEQUENCE public.season_season_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.season_season_id_seq OWNER TO rj;
+
+--
+-- Name: season_season_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: rj
+--
+
+ALTER SEQUENCE public.season_season_id_seq OWNED BY public.season.season_id;
+
+
+--
+-- Name: sides_sides_id_seq; Type: SEQUENCE; Schema: public; Owner: rj
+--
+
+CREATE SEQUENCE public.sides_sides_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.sides_sides_id_seq OWNER TO rj;
+
+--
+-- Name: sides_sides_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: rj
+--
+
+ALTER SEQUENCE public.sides_sides_id_seq OWNED BY public.sides.sides_id;
+
+
+--
+-- Name: meals meal_id; Type: DEFAULT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.meals ALTER COLUMN meal_id SET DEFAULT nextval('public.meals_meal_id_seq'::regclass);
+
+
+--
+-- Name: season season_id; Type: DEFAULT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.season ALTER COLUMN season_id SET DEFAULT nextval('public.season_season_id_seq'::regclass);
+
+
+--
+-- Name: sides sides_id; Type: DEFAULT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.sides ALTER COLUMN sides_id SET DEFAULT nextval('public.sides_sides_id_seq'::regclass);
+
+
+--
+-- Data for Name: meals; Type: TABLE DATA; Schema: public; Owner: rj
+--
+
+COPY public.meals (meal_id, meal_name, solo, season, weekend, difficulty) FROM stdin;
+11	chicken_dumplings	0	{3,4}	1	\N
+13	pulled_pork_sandwiches	0	{1,3,4}	1	\N
+4	white_chicken_chili	0	{1,3,4}	1	\N
+12	brats	0	{2,3}	0	\N
+1	steak	0	{2,3}	0	\N
+15	shrimp_alfredo	0	{1,2,3,4}	0	\N
+16	burritos	0	{1,2,3,4}	0	\N
+17	chicken_sandwiches	0	{1,2,3,4}	0	\N
+2	burgers	0	{2,3}	0	\N
+6	tortellini	1	{1,2,3,4}	0	\N
+5	salmon	0	{1,2,3,4}	0	\N
+7	crunch_wraps	0	{1,2,3,4}	0	\N
+8	perch	0	{1,2,3,4}	0	\N
+9	pork_chops	0	{1,2,3,4}	0	\N
+10	mac_and_cheese	0	{1,2,3,4}	0	\N
+14	nachos	0	{1,2,3,4}	0	\N
+3	spaghetti_and_meatballs	0	{1,3,4}	0	\N
+18	hot_dogs	0	{2,3}	0	\N
+19	quesadillas	0	{1,2,3,4}	0	\N
+20	grilled_cheese_tomato_soup	1	{1,2,3,4}	0	\N
+21	chicken_fingers	1	{1,2,3,4}	0	\N
+22	salad	1	{1,2,3,4}	0	\N
+23	white_cheddar_shells	1	{1,2,3,4}	0	\N
+24	parmesean_pasta	1	{1,2,3,4}	0	\N
+\.
+
+
+--
+-- Data for Name: meals_sides; Type: TABLE DATA; Schema: public; Owner: rj
+--
+
+COPY public.meals_sides (meal_id, side_id) FROM stdin;
+1	1
+1	6
+8	1
+8	6
+8	14
+\.
+
+
+--
+-- Data for Name: results_table; Type: TABLE DATA; Schema: public; Owner: rj
+--
+
+COPY public.results_table (day_of_week, meal_id, meal_name, season) FROM stdin;
+Mon 3/18	8	perch	{1,2,3,4}
+Tue 3/19	18	hot_dogs	{2,3}
+Wed 3/20	2	burgers	{2,3}
+Thu 3/21	24	parmesean_pasta	{1,2,3,4}
+Fri 3/22	9	pork_chops	{1,2,3,4}
+Sat 3/23	15	shrimp_alfredo	{1,2,3,4}
+Sun 3/24	12	brats	{2,3}
+\.
+
+
+--
+-- Data for Name: season; Type: TABLE DATA; Schema: public; Owner: rj
+--
+
+COPY public.season (season_id, season_name) FROM stdin;
+1	spring
+2	summer
+3	fall
+4	winter
+\.
+
+
+--
+-- Data for Name: sides; Type: TABLE DATA; Schema: public; Owner: rj
+--
+
+COPY public.sides (sides_id, side_name) FROM stdin;
+1	peas
+2	mini_ciabatta_buns
+3	arnies_bread
+4	mashed_potatoes_redskins
+5	mashed_potatoes_garlic
+6	mashed_potatoes
+7	steak_fries
+8	botan_calrose_rice
+9	hot_dog_buns
+10	hamburger_buns
+11	lettuce
+12	onion
+13	tomato
+14	corn
+15	broccoli
+16	cauliflower
+17	tortillas
+\.
+
+
+--
+-- Name: meals_meal_id_seq; Type: SEQUENCE SET; Schema: public; Owner: rj
+--
+
+SELECT pg_catalog.setval('public.meals_meal_id_seq', 24, true);
+
+
+--
+-- Name: season_season_id_seq; Type: SEQUENCE SET; Schema: public; Owner: rj
+--
+
+SELECT pg_catalog.setval('public.season_season_id_seq', 4, true);
+
+
+--
+-- Name: sides_sides_id_seq; Type: SEQUENCE SET; Schema: public; Owner: rj
+--
+
+SELECT pg_catalog.setval('public.sides_sides_id_seq', 17, true);
+
+
+--
+-- Name: meals meals_pkey; Type: CONSTRAINT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.meals
+    ADD CONSTRAINT meals_pkey PRIMARY KEY (meal_id);
+
+
+--
+-- Name: meals_sides meals_sides_pkey; Type: CONSTRAINT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.meals_sides
+    ADD CONSTRAINT meals_sides_pkey PRIMARY KEY (meal_id, side_id);
+
+
+--
+-- Name: season season_pkey; Type: CONSTRAINT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.season
+    ADD CONSTRAINT season_pkey PRIMARY KEY (season_id);
+
+
+--
+-- Name: sides sides_pkey; Type: CONSTRAINT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.sides
+    ADD CONSTRAINT sides_pkey PRIMARY KEY (sides_id);
+
+
+--
+-- Name: meals_sides meals_sides_meal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.meals_sides
+    ADD CONSTRAINT meals_sides_meal_id_fkey FOREIGN KEY (meal_id) REFERENCES public.meals(meal_id);
+
+
+--
+-- Name: meals_sides meals_sides_side_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: rj
+--
+
+ALTER TABLE ONLY public.meals_sides
+    ADD CONSTRAINT meals_sides_side_id_fkey FOREIGN KEY (side_id) REFERENCES public.sides(sides_id);
+
+
+--
+-- PostgreSQL database dump complete
+--
+
