@@ -1,93 +1,99 @@
 /* Temporary table to store data.*/
 DROP TABLE IF EXISTS results_table CASCADE;
-/* Four CTEs for different days of the week: M -> W, Th., Fr., Weekend */
+
 CREATE TABLE results_table AS 
-WITH initial_random AS (
-    SELECT * FROM meals
-     WHERE (meals.solo <> 1 AND meals.weekend <> 1 AND 2 = ANY(meals.season))
-     ORDER BY (RANDOM())
-     LIMIT 3
-), additional_solo AS (
-    SELECT * FROM meals
-     WHERE ((meals.solo = 1 
-             AND 2 = ANY(meals.season)) 
-             AND NOT (
-               (meals.meal_name)::text IN (
-               SELECT initial_random.meal_name
-                 FROM initial_random))
-               )
-     ORDER BY (RANDOM())
-     LIMIT 1
-), additional_friday AS (
-    SELECT * FROM meals
-     WHERE ((meals.weekend <> 1 
-             AND meals.solo <> 1 
-             AND 2 = ANY(meals.season)) 
-             AND NOT (
-               (meals.meal_name)::text IN (
-               SELECT initial_random.meal_name
-                 FROM initial_random
-                UNION
-               SELECT additional_solo.meal_name
-                 FROM additional_solo))
-           )
-     ORDER BY (RANDOM())
-     LIMIT 1
-), additional_weekend AS (
-    SELECT * FROM meals
-     WHERE ((meals.solo <> 1 
-             AND 2 = ANY(meals.season)) 
-             AND NOT ((meals.meal_name)::text IN (
-               SELECT initial_random.meal_name
-                 FROM initial_random
-                UNION
-               SELECT additional_solo.meal_name
-                 FROM additional_solo
-                UNION
-               SELECT additional_friday.meal_name
-                 FROM additional_friday)))
-     ORDER BY (RANDOM())
-     LIMIT 2
-), combined AS (
-    SELECT initial_random.meal_id,
-           initial_random.meal_name,
-           initial_random.solo,
-           initial_random.season,
-           initial_random.weekend
-      FROM initial_random
-     UNION ALL
-    SELECT additional_solo.meal_id,
-           additional_solo.meal_name,
-           additional_solo.solo,
-           additional_solo.season,
-           additional_solo.weekend
-      FROM additional_solo
-     UNION ALL
-    SELECT additional_friday.meal_id,
-           additional_friday.meal_name,
-           additional_friday.solo,
-           additional_friday.season,
-           additional_friday.weekend
-      FROM additional_friday
-     UNION ALL
-    SELECT additional_weekend.meal_id,
-           additional_weekend.meal_name,
-           additional_weekend.solo,
-           additional_weekend.season,
-           additional_weekend.weekend
-      FROM additional_weekend
-), numbered AS (
-    SELECT combined.meal_id,
-           combined.meal_name,
-           combined.solo,
-           combined.season,
-           combined.weekend,
-           ROW_NUMBER() OVER (ORDER BY ( SELECT NULL::text)) AS rn
-      FROM combined
+WITH dates AS (
+    -- Generate dates for the next two weeks starting from next Monday
+    SELECT date_trunc('week', CURRENT_DATE) + INTERVAL '7 days' + (n * INTERVAL '1 day') AS date
+    FROM generate_series(0, 13) AS n
+),
+meal_type_day_numbers AS (
+    -- Map meal types to day numbers and assign row numbers within each meal type
+    SELECT 
+        meal_type, 
+        date,
+        ROW_NUMBER() OVER (PARTITION BY meal_type ORDER BY date) AS rn
+    FROM (
+        SELECT date, 
+            CASE 
+                WHEN EXTRACT(ISODOW FROM date) BETWEEN 1 AND 3 THEN 'initial_random'      -- Monday to Wednesday
+                WHEN EXTRACT(ISODOW FROM date) = 4 THEN 'additional_solo'                 -- Thursday
+                WHEN EXTRACT(ISODOW FROM date) = 5 THEN 'additional_friday'               -- Friday
+                WHEN EXTRACT(ISODOW FROM date) IN (6, 7) THEN 'additional_weekend'        -- Saturday and Sunday
+            END AS meal_type
+        FROM dates
+    ) sub
+),
+-- Select meals for each meal type, ensuring no duplicates across meal types
+initial_random_meals AS (
+    SELECT *, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+    FROM meals
+    WHERE solo <> 1 AND weekend <> 1 AND 2 = ANY(season)
+    LIMIT (SELECT COUNT(*) FROM meal_type_day_numbers WHERE meal_type = 'initial_random')
+),
+additional_solo_meals AS (
+    SELECT *, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+    FROM meals
+    WHERE solo = 1 AND 2 = ANY(season)
+      AND meal_name NOT IN (SELECT meal_name FROM initial_random_meals)
+    LIMIT (SELECT COUNT(*) FROM meal_type_day_numbers WHERE meal_type = 'additional_solo')
+),
+additional_friday_meals AS (
+    SELECT *, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+    FROM meals
+    WHERE solo <> 1 AND weekend <> 1 AND 2 = ANY(season)
+      AND meal_name NOT IN (
+          SELECT meal_name FROM initial_random_meals
+          UNION
+          SELECT meal_name FROM additional_solo_meals
+      )
+    LIMIT (SELECT COUNT(*) FROM meal_type_day_numbers WHERE meal_type = 'additional_friday')
+),
+additional_weekend_meals AS (
+    SELECT *, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+    FROM meals
+    WHERE solo <> 1 AND 2 = ANY(season)
+      AND meal_name NOT IN (
+          SELECT meal_name FROM initial_random_meals
+          UNION
+          SELECT meal_name FROM additional_solo_meals
+          UNION
+          SELECT meal_name FROM additional_friday_meals
+      )
+    LIMIT (SELECT COUNT(*) FROM meal_type_day_numbers WHERE meal_type = 'additional_weekend')
+),
+-- Combine all meals with their assigned row numbers and meal types
+meals_with_rn AS (
+    SELECT meal_id, meal_name, solo, season, weekend, 'initial_random' AS meal_type, rn
+    FROM initial_random_meals
+    UNION ALL
+    SELECT meal_id, meal_name, solo, season, weekend, 'additional_solo' AS meal_type, rn
+    FROM additional_solo_meals
+    UNION ALL
+    SELECT meal_id, meal_name, solo, season, weekend, 'additional_friday' AS meal_type, rn
+    FROM additional_friday_meals
+    UNION ALL
+    SELECT meal_id, meal_name, solo, season, weekend, 'additional_weekend' AS meal_type, rn
+    FROM additional_weekend_meals
+),
+-- Join meals to dates based on meal type and row number
+selected_meals AS (
+    SELECT
+        mtd.date,
+        mtd.meal_type,
+        meals.meal_id,
+        meals.meal_name,
+        meals.season
+    FROM meal_type_day_numbers mtd
+    JOIN meals_with_rn meals
+      ON mtd.meal_type = meals.meal_type AND mtd.rn = meals.rn
 )
-/* Output the day of the week in specific format + relevant columns from our table */
-SELECT TO_CHAR((date_trunc('week'::text, (CURRENT_DATE)::timestamp with time zone) + (((numbered.rn - 1))::double precision * '1 day'::interval) + interval '7 days'), 'Dy FMMM/DD'::text) AS day_of_week,
-     numbered.meal_id,
-     numbered.meal_name,
-     numbered.season
-FROM numbered;
+-- Final selection and formatting
+SELECT
+    TO_CHAR(date, 'Dy FMMM/DD') AS day_of_week,
+    meal_id,
+    meal_name,
+    season
+FROM selected_meals
+ORDER BY date;
+
