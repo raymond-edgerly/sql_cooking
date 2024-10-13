@@ -2,13 +2,21 @@
 DROP TABLE IF EXISTS results_table CASCADE;
 
 CREATE TABLE results_table AS 
-WITH dates AS (
+WITH current_season AS (
+    SELECT CASE
+        WHEN EXTRACT(MONTH FROM CURRENT_DATE) IN (3, 4, 5) THEN 1  -- Spring
+        WHEN EXTRACT(MONTH FROM CURRENT_DATE) IN (6, 7, 8) THEN 2  -- Summer
+        WHEN EXTRACT(MONTH FROM CURRENT_DATE) IN (9, 10, 11) THEN 3  -- Autumn
+        ELSE 4  -- Winter
+    END AS season_number
+),
+dates AS (
     -- Generate dates for the next two weeks starting from next Monday
     SELECT date_trunc('week', CURRENT_DATE) + INTERVAL '7 days' + (n * INTERVAL '1 day') AS date
     FROM generate_series(0, 13) AS n
 ),
 meal_type_day_numbers AS (
-    -- Map meal types to day numbers and assign row numbers within each meal type
+    -- Map meal types to dates and assign row numbers within each meal type
     SELECT 
         meal_type, 
         date,
@@ -24,25 +32,29 @@ meal_type_day_numbers AS (
         FROM dates
     ) sub
 ),
--- Select meals for each meal type, ensuring no duplicates across meal types
 initial_random_meals AS (
-    SELECT *, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
-    FROM meals
-    WHERE solo <> 1 AND weekend <> 1 AND 2 = ANY(season)
+    SELECT meals.*, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+    FROM meals, current_season
+    WHERE meals.solo <> 1 
+      AND meals.weekend <> 1 
+      AND current_season.season_number = ANY(meals.season)
     LIMIT (SELECT COUNT(*) FROM meal_type_day_numbers WHERE meal_type = 'initial_random')
 ),
 additional_solo_meals AS (
-    SELECT *, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
-    FROM meals
-    WHERE solo = 1 AND 2 = ANY(season)
-      AND meal_name NOT IN (SELECT meal_name FROM initial_random_meals)
+    SELECT meals.*, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+    FROM meals, current_season
+    WHERE meals.solo = 1 
+      AND current_season.season_number = ANY(meals.season)
+      AND meals.meal_name NOT IN (SELECT meal_name FROM initial_random_meals)
     LIMIT (SELECT COUNT(*) FROM meal_type_day_numbers WHERE meal_type = 'additional_solo')
 ),
 additional_friday_meals AS (
-    SELECT *, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
-    FROM meals
-    WHERE solo <> 1 AND weekend <> 1 AND 2 = ANY(season)
-      AND meal_name NOT IN (
+    SELECT meals.*, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+    FROM meals, current_season
+    WHERE meals.solo <> 1 
+      AND meals.weekend <> 1 
+      AND current_season.season_number = ANY(meals.season)
+      AND meals.meal_name NOT IN (
           SELECT meal_name FROM initial_random_meals
           UNION
           SELECT meal_name FROM additional_solo_meals
@@ -50,10 +62,11 @@ additional_friday_meals AS (
     LIMIT (SELECT COUNT(*) FROM meal_type_day_numbers WHERE meal_type = 'additional_friday')
 ),
 additional_weekend_meals AS (
-    SELECT *, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
-    FROM meals
-    WHERE solo <> 1 AND 2 = ANY(season)
-      AND meal_name NOT IN (
+    SELECT meals.*, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+    FROM meals, current_season
+    WHERE meals.solo <> 1 
+      AND current_season.season_number = ANY(meals.season)
+      AND meals.meal_name NOT IN (
           SELECT meal_name FROM initial_random_meals
           UNION
           SELECT meal_name FROM additional_solo_meals
@@ -62,7 +75,6 @@ additional_weekend_meals AS (
       )
     LIMIT (SELECT COUNT(*) FROM meal_type_day_numbers WHERE meal_type = 'additional_weekend')
 ),
--- Combine all meals with their assigned row numbers and meal types
 meals_with_rn AS (
     SELECT meal_id, meal_name, solo, season, weekend, 'initial_random' AS meal_type, rn
     FROM initial_random_meals
@@ -76,7 +88,6 @@ meals_with_rn AS (
     SELECT meal_id, meal_name, solo, season, weekend, 'additional_weekend' AS meal_type, rn
     FROM additional_weekend_meals
 ),
--- Join meals to dates based on meal type and row number
 selected_meals AS (
     SELECT
         mtd.date,
@@ -88,7 +99,6 @@ selected_meals AS (
     JOIN meals_with_rn meals
       ON mtd.meal_type = meals.meal_type AND mtd.rn = meals.rn
 )
--- Final selection and formatting
 SELECT
     TO_CHAR(date, 'Dy FMMM/DD') AS day_of_week,
     meal_id,
